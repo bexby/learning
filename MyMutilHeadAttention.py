@@ -10,12 +10,14 @@ class MyMutilHeadAttention(nn.Module):
     def __init__(self, embedding_dim, num_head, bias=True):
         super().__init__()
         self.softmax = nn.Softmax(dim=-1)
+        self.dropout = nn.Dropout(0.1)
         self.embedding_dim = embedding_dim
         self.num_head = num_head
         self.q_w = nn.Linear(embedding_dim, embedding_dim, bias)
         self.k_w = nn.Linear(embedding_dim, embedding_dim, bias)
         self.v_w = nn.Linear(embedding_dim, embedding_dim, bias)
         self.linear = nn.Linear(embedding_dim, embedding_dim, bias)
+
         if embedding_dim % num_head != 0:
             raise ValueError("could not find a equal dim to all heads")
         
@@ -25,6 +27,7 @@ class MyMutilHeadAttention(nn.Module):
         query: Optional[torch.Tensor], 
         key: Optional[torch.Tensor], 
         value: Optional[torch.Tensor], 
+        mask: Optional[torch.Tensor] = None
     ) -> torch.tensor:
         
         """
@@ -51,9 +54,14 @@ class MyMutilHeadAttention(nn.Module):
         
         Q_n, K_n, V_n = Q.transpose(1, 2), K.transpose(1, 2), V.transpose(1, 2)     # (N, num_head, seq_len, dim)
         mul_res = torch.matmul(Q_n, K_n.transpose(-1, -2))  # (N, num_head, q_seq_len, k_seq_len)
+        mul_res = self.dropout(mul_res)
+        if mask is not None:
+            if mask.dtype != query.dtype:
+                mask = mask.to(query.dtype)
+            mul_res = torch.matmul(mul_res, mask)
         sf_res = self.softmax(mul_res / head_dim ** 0.5)  # (N, num_head, q_seq_len, k_seq_len)
-        head_res = torch.matmul(sf_res, V_n)
-        result = head_res.reshape(N, q_seq_len, self.embedding_dim)
+        head_res = torch.matmul(sf_res, V_n)    # (N, num_head, q_seq_len, head_dim)
+        result = head_res.transpose(1, 2).contiguous().reshape(N, q_seq_len, self.embedding_dim)    # (N, q_seq_len, embedding_dim)
         return self.linear(result)
         
 
@@ -66,34 +74,91 @@ class MyMutilHeadAttention(nn.Module):
 # result = mha(query, key, value)
 # print(result.shape)
 
+class FNN(nn.Module):
+    def __init__(self, hidden_size, bias):
+        super.__init__()
+        self.linear1 = nn.Linear(hidden_size, hidden_size * 4, bias)
+        self.linear2 = nn.Linear(4 * hidden_size, hidden_size, bias)
+        self.activate = nn.GELU()
+        self.dropout = nn.Dropout(0.1)
+
+    def forward(self, hidden_state):
+        output = self.linear1(hidden_state)
+        output = self.activate(output)
+        output = self.dropout(output)
+        output = self.linear2(output)
+        output = self.dropout(output)
+        return output
 
 
 class Encoder(nn.Module):
     def __init__(self, hidden_size: int, num_head: int, bias: bool = False):
         super().__init__()
         self.attention = MyMutilHeadAttention(hidden_size, num_head, bias)
-        self.fnn1 = nn.Linear(hidden_size, hidden_size * 4, bias)
-        self.fnn2 = nn.Linear(4 * hidden_size, hidden_size, bias)
-        self.activate = nn.ReLU()
-        self.dropout = nn.Dropout(0.05)
+        self.fnn = FNN(hidden_size, bias)
+        self.dropout = nn.Dropout(0.1)
+        self.layernorm = nn.LayerNorm(hidden_size)
     
-    def forward(self, hidden_state):
-        mha_output = self.attention(hidden_state, hidden_state, hidden_state)
-        error_connect = hidden_state + mha_output
-        norm_res = F.layer_norm(error_connect, error_connect.shape[1:])
-        linear_output1 = self.fnn1(norm_res)
-        act_output = self.activate(linear_output1)
-        linear_output2 = self.fnn2(act_output)
-        result = error_connect + linear_output2
-        norm_result = F.layer_norm(result, result.shape[1:])
-        return self.dropout(norm_result)
+    def forward(self, hidden_state, mask):
+        residual = hidden_state
+        mha_output = self.attention(hidden_state, hidden_state, hidden_state, mask)
+        mha_output = self.dropout(mha_output)
+        residual_output1 = residual + mha_output
+        norm_res1 = self.layernorm(residual_output1)
+
+        fnn_output = self.fnn(norm_res1)
+        residual_output2 = norm_res1 + fnn_output
+        norm_res2 = self.layernorm(residual_output2)
+        return norm_res2
+
+
+class decoder(nn.Module):
+    def __init__(self, hidden_size: int, num_head: int, bias: bool = True):
+        super().__init__()
+        self.cross_attn = MyMutilHeadAttention(hidden_size, num_head, bias)
+        self.self_attn = MyMutilHeadAttention(hidden_size, num_head, bias)
+        self.fnn1 = FNN(hidden_size, bias)
+        self.fnn2 = FNN(hidden_size, bias)
+        self.dropout = nn.Dropout(0.1)
+        self.layernorm1 = nn.LayerNorm(hidden_size)
+        self.layernorm2 = nn.LayerNorm(hidden_size)
+
+    def forward(
+        self, 
+        hidden_state: Optional[torch.tensor], 
+        key: Optional[torch.tensor], 
+        value: Optional[torch.tensor],
+        mask: Optional[torch.tensor] = None
+        ) -> torch.tensor:
+
+        residual = hidden_state
+        norm_res1 = self.layernorm1(hidden_state)
+        self_mha = self.self_attn(norm_res1, norm_res1, norm_res1, mask)
+        self_mha = self.dropout(self_mha)
+        residual_output1 = self_mha + residual
+        
+        norm_res2 = self.layernorm2(residual_output1)
+        fnn_output1 = self.fnn1(norm_res2)
+        residual_output2 = residual_output1 + fnn_output1
+        
+        norm_res3 = self.layernorm1(residual_output2)
+        self_mha = self.cross_attn(norm_res3, key, value)
+        self_mha = self.dropout(self_mha)
+        residual_output1 = self_mha + residual
+
+        
+
+        pass
+        
+
 
 
 myencoder = Encoder(12, 4)
 
+# print(myencoder)
 data = torch.randn((2, 10 ,12))
-
-print(myencoder(data).shape)
+mask = torch.randint(0, 2, (10, 10))
+print(myencoder(data, mask=mask).shape)
 
 # nn.MultiheadAttention().forward()
 
