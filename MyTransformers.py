@@ -38,7 +38,7 @@ class MyMultiHeadAttention(nn.Module):
         key (N, k_seq_len, emb_d)
         value (N, v_seq_len, emb_d)
         key_padding_mask (N, k_seq_len): for three type attentions, we just to prevent useless padding token in "key" from participating weight score
-        attn_mask (N, k_seq_len, k_seq_len): only for decoder self-attention (q_seq_len = k_seq_len)
+        attn_mask (k_seq_len, k_seq_len): only for decoder self-attention (q_seq_len = k_seq_len)
 
         """
 
@@ -141,24 +141,24 @@ class Decoder(nn.Module):
         hidden_state: Optional[torch.tensor], 
         key: Optional[torch.tensor], 
         value: Optional[torch.tensor],
-        attn_mask: Optional[torch.tensor],
-        key_padding_mask: Optional[torch.tensor] = None,
-        
+        key_padding_mask: Optional[torch.tensor] = None,      
         ) -> torch.tensor:
 
         residual = hidden_state
         norm_res1 = self.layernorm1(hidden_state)
+        k_seq_len = hidden_state.shape[1]
+        attn_mask = torch.triu(torch.ones((k_seq_len, k_seq_len)), diagonal=1).bool()
         self_mha = self.self_attn(norm_res1, norm_res1, norm_res1, key_padding_mask, attn_mask)
         self_mha = self.dropout(self_mha)
         residual_output = self_mha + residual
         
         if self.is_encoder_decoder:
-            norm_res2 = self.layernorm2(residual_output)
+            norm_res2 = self.layernorm3(residual_output)
             cross_mha = self.cross_attn(norm_res2, key, value, key_padding_mask)
             cross_mha = self.dropout(cross_mha)
             residual_output = cross_mha + residual_output
 
-        norm_res3 = self.layernorm3(residual_output)
+        norm_res3 = self.layernorm2(residual_output)
         fnn_output = self.fnn(norm_res3)
         residual_output3 = residual_output + fnn_output
 
@@ -168,14 +168,14 @@ class Decoder(nn.Module):
 # nn.MultiheadAttention().forward()
 
 myencoder = Encoder(12, 4)
-mydecoder = Decoder(12, 4)
+mydecoder = Decoder(12, 4, True)
 # print(myencoder)
 data = torch.randn((2, 10 ,12))
 padding_mask = torch.randint(0, 2, (2, 10)).bool()
-attn_mask = torch.triu(torch.ones((10, 10)), diagonal=1).bool()
-print(myencoder(data, padding_mask).shape)
-print(myencoder(data, padding_mask))
-# print(mydecoder(data, data, data, mask).shape)
+# attn_mask = torch.triu(torch.ones((10, 10)), diagonal=1).bool()
+# print(myencoder(data, padding_mask).shape)
+# print(myencoder(data, padding_mask))
+print(mydecoder(data, data, data, padding_mask).shape)
 
 # nn.MultiheadAttention().forward()
 
