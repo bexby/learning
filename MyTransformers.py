@@ -34,11 +34,16 @@ class MyMultiHeadAttention(nn.Module):
         """
         Args:
 
-        query (N, q_seq_len, emb_d)
-        key (N, k_seq_len, emb_d)
-        value (N, v_seq_len, emb_d)
-        key_padding_mask (N, k_seq_len): for three type attentions, we just to prevent useless padding token in "key" from participating weight score
-        attn_mask (k_seq_len, k_seq_len): only for decoder self-attention (q_seq_len = k_seq_len)
+        query (N, q_seq_len, emb_d):
+        key (N, k_seq_len, emb_d):
+        value (N, v_seq_len, emb_d):
+        key_padding_mask (N, k_seq_len): 
+            for three type attentions, we just to prevent useless padding token 
+            in "key" from participating weight score. If isinstance(int), 0 represents
+            the padding positions; if isinstance(bool), True represents the padding 
+            positions
+        attn_mask (k_seq_len, k_seq_len): 
+            only for decoder self-attention (q_seq_len = k_seq_len)
 
         """
 
@@ -52,6 +57,8 @@ class MyMultiHeadAttention(nn.Module):
             raise ValueError("query and key's dim are not equal")
         elif key.shape[1] != value.shape[1]:
             raise ValueError("key_seq_len is not equal to value_seq_len")
+        elif key_padding_mask.dtype != torch.int64 and key_padding_mask.dtype != torch.bool:
+            raise ValueError("padding_mask.dtype must be torch.int64 or torch.bool")
         
         Q = self.q_w(query).reshape(N, q_seq_len, self.num_head, head_dim) 
         K = self.k_w(query).reshape(N, k_seq_len, self.num_head, head_dim)
@@ -61,9 +68,12 @@ class MyMultiHeadAttention(nn.Module):
         mul_res = torch.matmul(Q_n, K_n.transpose(-1, -2))  # (N, num_head, q_seq_len, k_seq_len)
         mul_res = self.dropout(mul_res)
         if key_padding_mask is not None:
+            if key_padding_mask.dtype != torch.bool:
+                key_padding_mask = ~ key_padding_mask.bool()
             key_padding_mask = key_padding_mask.unsqueeze(1).unsqueeze(2)
             key_padding_mask = key_padding_mask.expand((N, self.num_head, q_seq_len, k_seq_len))
             mul_res = torch.masked_fill(mul_res, key_padding_mask, -torch.inf)
+                
         if attn_mask is not None:
             attn_mask = attn_mask.unsqueeze(0).unsqueeze(0)
             attn_mask = attn_mask.expand((N, self.num_head, q_seq_len, k_seq_len))
@@ -165,17 +175,20 @@ class Decoder(nn.Module):
         return residual_output3
  
 
+
+if __name__ == "__main__":
+
 # nn.MultiheadAttention().forward()
 
-myencoder = Encoder(12, 4)
-mydecoder = Decoder(12, 4, True)
-# print(myencoder)
-data = torch.randn((2, 10 ,12))
-padding_mask = torch.randint(0, 2, (2, 10)).bool()
-# attn_mask = torch.triu(torch.ones((10, 10)), diagonal=1).bool()
-# print(myencoder(data, padding_mask).shape)
-# print(myencoder(data, padding_mask))
-print(mydecoder(data, data, data, padding_mask).shape)
+    myencoder = Encoder(12, 4)
+    mydecoder = Decoder(12, 4, True)
+    # print(myencoder)
+    data = torch.randn((2, 10 ,12))
+    padding_mask = torch.randint(0, 2, (2, 10)).bool()
+    # attn_mask = torch.triu(torch.ones((10, 10)), diagonal=1).bool()
+    # print(myencoder(data, padding_mask).shape)
+    # print(myencoder(data, padding_mask))
+    print(mydecoder(data, data, data, padding_mask).shape)
 
 # nn.MultiheadAttention().forward()
 
