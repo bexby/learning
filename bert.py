@@ -87,14 +87,24 @@ class Bert(nn.Module):
 
         loss = None
         if labels is not None:
-            loss = self.compute_loss(hidden_state, labels)
+            same_class_label = token_type_ids[:, 0]==token_type_ids[:, -1]  # (N,)
+            # pdb.set_trace()
+            same_class_label = torch.masked_fill(torch.zeros_like(same_class_label, dtype=torch.int64), same_class_label, 1)
+            loss = self.compute_loss(hidden_state, labels, same_class_label)
         
         output = BertOutput(hidden_state.detach().clone(), cls_tensor.detach().clone(), loss)
         return output
     
-    def compute_loss(self, last_hidden_state, labels):
+    def compute_loss(self, last_hidden_state, labels, is_same_meaning):
         mlm_output = self.mlm_transform(last_hidden_state)  # (N, seq_len, hidden_size)
         mlm_output = self.mlm_decoder(mlm_output)   # (N, seq_len, vocab_size)
+        mlm_output = mlm_output.reshape(-1, mlm_output.shape[-1])   # (N*seq_len, vocab_size)
+        mlm_loss = F.cross_entropy(mlm_output, labels.view(-1), ignore_index=-100)
+
+        cls_tensor = self.pooler(last_hidden_state)   # (N, hidden_size)
+        cls_tensor = self.nsp_classifier(cls_tensor)    # (N, 2)
+        nsp_loss = F.cross_entropy(cls_tensor, is_same_meaning)
+        return mlm_loss + nsp_loss
         
         
 # emb = BertEmbedding(20, 5, 60)
@@ -121,20 +131,17 @@ def test_bert_data_stream():
     print(output.shape)
 
 def main():
-    ckp = "google-bert/bert-base-uncased"
+    tokenizer_ckp = "google-bert/bert-base-uncased"
     sentence = "OpenAI is not open"
-    tokenizer = BertTokenizer.from_pretrained(ckp)
+    tokenizer = BertTokenizer.from_pretrained(tokenizer_ckp)
     input = tokenizer([sentence], return_tensors="pt")
     bert_config = BertConfig()
     bert = Bert(bert_config)
-    print(bert(**input))
-    pass
-    
-
-
-
-
-
+    bert.train()
+    output = bert(**input, labels=input["input_ids"])
+    print(output.loss)
+    print(output.last_hidden_state.shape)
+    output.loss.backward()
 
 
 if __name__ == "__main__":

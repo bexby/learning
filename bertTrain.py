@@ -1,14 +1,9 @@
 import os
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 import torch
-import bert
-from transformers import BertTokenizer
+import datasets
+from datasets import load_dataset
 
-ckp = "google-bert/bert-base-uncased"
-sentence = "OpenAI is not open"
+ds = load_dataset("Salesforce/wikitext", "wikitext-103-raw-v1")
 
-tokenizer = BertTokenizer.from_pretrained(ckp)
-
-print(tokenizer([sentence]))
-
-
-
+print(ds["text"[:5]])
