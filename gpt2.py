@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from MyTransformers import Decoder
 from dataclasses import dataclass
-from transformers import BertTokenizer
+from transformers import AutoTokenizer
 import pdb
 
 
@@ -19,6 +19,7 @@ class GPT2Config:
 @dataclass
 class GPT2Output:
     last_hidden_state: torch.Tensor = None
+    lm_head_output: torch.Tensor = None
     loss: torch.Tensor = None
 
 
@@ -51,13 +52,45 @@ class GPT2(nn.Module):
         self, 
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
+        labels: torch.Tensor = None
         ) -> GPT2Output:
         
+        """
+        Args:
+        input_ids:
+            (N, max_batch_seq_len)
+        attention_mask:
+            (N, max_batch_seq_len), 0 represent the padding position
+        labels:
+            (N, )
+        """
+
+
         hidden_state = self.embedding(input_ids)
         for decoder in self.layers:
             hidden_state = decoder(hidden_state, hidden_state, hidden_state, attention_mask)
 
-        hidden_state = self.lm_head(hidden_state)
-        return
+        lm_head_output = self.lm_head(hidden_state)
+
+        
+        loss = None
+        output = GPT2Output(hidden_state, lm_head_output, loss)
+
+        return output
 
 
+def test_gpt2():
+    gpt2_config = GPT2Config()
+    gpt2 = GPT2(gpt2_config)
+    tokenizer_ckp = "openai-community/gpt2"
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_ckp)
+
+    prompt = ["In a raining day a poor man", "OpenAI is not open because"]
+    inputs = tokenizer(prompt, return_tensors="pt")
+    outputs = gpt2(inputs)
+    print(outputs.last_hidden_state.shape)
+    print(outputs.lm_head_output.shape)
+
+
+if __name__ == "__main__":
+    test_gpt2()

@@ -7,11 +7,11 @@ import torch.nn as nn
 import torch
 gpt2 = GPT2LMHeadModel.from_pretrained("openai-community/gpt2")
 gpt2_tokenizer = AutoTokenizer.from_pretrained("openai-community/gpt2")
-print(gpt2)
-# embedding = bert.embeddings
-# word_embedding = embedding.word_embeddings
-# pos_embedding = embedding.position_embeddings
-# ty_embedding = embedding.token_type_embeddings
-# print(word_embedding)
-# print(pos_embedding)
-# print(ty_embedding)
+
+
+prompt = ["In a raining day a poor man", "OpenAI is not open because"]
+
+input = gpt2_tokenizer(prompt, return_tensors="pt")
+output = gpt2(input)
+
+print(output)
