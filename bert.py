@@ -96,6 +96,15 @@ class Bert(nn.Module):
         return output
     
     def compute_loss(self, last_hidden_state, labels, is_same_meaning):
+        """
+        MLM target
+            example: masked sentence a b x c d
+            given a, b, c, d, require x probability
+
+        NSP target
+            example: [cls] sentence A [seq] sentence B [seq] 
+            utilize [cls] vector to classify whether B is the next sentence of A
+        """
         mlm_output = self.mlm_transform(last_hidden_state)  # (N, seq_len, hidden_size)
         mlm_output = self.mlm_decoder(mlm_output)   # (N, seq_len, vocab_size)
         mlm_output = mlm_output.reshape(-1, mlm_output.shape[-1])   # (N*seq_len, vocab_size)

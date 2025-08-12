@@ -13,5 +13,5 @@ prompt = ["In a raining day a poor man", "OpenAI is not open because"]
 
 input = gpt2_tokenizer(prompt, return_tensors="pt")
 output = gpt2(input)
-
+gpt2.generate()
 print(output)
