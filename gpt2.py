@@ -105,11 +105,47 @@ class GPT2(nn.Module):
             if generation_config.do_sample:
                 if generation_config.top_k is None and generation_config.top_p is None:
                     raise ValueError("do sample but both top_k and top_p is None")
-                topk_logits, topk_indices = probability, torch.stack([torch.arange(probability.shape[-1])]*probability.shape[0], dim=0)
                 if generation_config.top_k is not None:
-                    topk_logits, topk_indices = torch.topk(probability, generation_config.top_k, dim=-1)
+                    top_probs, topk_indices = torch.topk(probability, generation_config.top_k, dim=-1)
+                if generation_config.top_p is not None:
+                    _, topp_indices = self.top_p(top_probs, generation_config.top_p)
+                    if generation_config.top_k is not None:
+                        topp_indices = torch.gather(topk_indices, -1, topp_indices)
+            else:
+                pass
 
-                
+
+    def top_p(self, data: torch.Tensor, p: float):
+        """
+        Args:
+            data: (N, len)
+            p: float
+        
+        Algorithm:
+            use torch.topk to find a range rougthly, and then cumulate the probability, use binary-search to 
+            find the p boundary
+        
+        Return:
+            values (N, 1), indices (N, 1)
+        """
+        max_k = data.shape[-1]
+        k = min(max_k, 2000)
+        top_k, indices = torch.topk(data, k)    # top_k has been sorted by descending order
+        cumsum = torch.cumsum(top_k, dim=-1)
+        if not torch.all(cumsum[:, -1] > p).item():     # if k is not large enough to cover cumulated probability p 
+            top_k, indices = torch.topk(data, max_k)
+            cumsum = torch.cumsum(top_k, dim=-1)
+        
+        bs, max_len = cumsum.shape
+        targets = torch.searchsorted(cumsum, torch.ones((bs, 1))*p)
+
+        positions = torch.arange(max_len).unsqueeze(0).expand(bs, -1)
+        top_k = top_k.masked_fill(positions > targets, 0)
+
+        samples_idx = torch.multinomial(top_k, 1)
+        res_indices = torch.gather(indices, -1, samples_idx)
+        res_values = torch.gather(data, -1, res_indices)
+        return res_values, res_indices            
                 
         
 
