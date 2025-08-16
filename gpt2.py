@@ -98,22 +98,28 @@ class GPT2(nn.Module):
         if generation_config.max_new_tokens is not None:
             gen_len = max(gen_len, generation_config.max_new_tokens)
 
-        # TODO: finish the top p pipeline
-        for _ in range(gen_len):
-            logits = self.forward(input_ids, attention_mask).logits[:, -1, :].detach().clone()
-            probability = F.softmax(logits / generation_config.temperature, dim=-1) # (N, vocab_size)
-            if generation_config.do_sample:
-                if generation_config.top_k is None and generation_config.top_p is None:
-                    raise ValueError("do sample but both top_k and top_p is None")
-                if generation_config.top_k is not None:
-                    top_probs, topk_indices = torch.topk(probability, generation_config.top_k, dim=-1)
-                if generation_config.top_p is not None:
-                    _, topp_indices = self.top_p(top_probs, generation_config.top_p)
+        with torch.no_grad():
+            for _ in range(gen_len):
+                logits = self.forward(input_ids, attention_mask).logits[:, -1, :].detach().clone()
+                probability = F.softmax(logits / generation_config.temperature, dim=-1) # (N, vocab_size)
+                if generation_config.do_sample:
+                    if generation_config.top_k is None and generation_config.top_p is None:
+                        raise ValueError("do sample but both top_k and top_p is None")
                     if generation_config.top_k is not None:
-                        topp_indices = torch.gather(topk_indices, -1, topp_indices)
-            else:
-                pass
-
+                        top_probs, topk_indices = torch.topk(probability, generation_config.top_k, dim=-1)  # (N, k)
+                        next_token = topk_indices.gather(-1, torch.multinomial(top_probs, 1))
+                    if generation_config.top_p is not None:
+                        _, topp_indices = self.top_p(top_probs, generation_config.top_p)    # different from torch.topk, self.top_p return the final sampled one in cumulate p
+                        if generation_config.top_k is not None:     # if has been processed base on top k, the indices should be convert base on vocabulary 
+                            topp_indices = torch.gather(topk_indices, -1, topp_indices)
+                        next_token = topp_indices
+                else:
+                    pdb.set_trace()
+                    next_token = torch.argmax(probability, -1).unsqueeze(1)
+                input_ids = torch.cat((input_ids, next_token), dim=1)
+                attention_mask = torch.cat((attention_mask, torch.ones(attention_mask.shape[0], 1, dtype=torch.int64)), dim=1)
+        
+        return input_ids
 
     def top_p(self, data: torch.Tensor, p: float):
         """
@@ -155,14 +161,18 @@ def test_gpt2():
     tokenizer_ckp = "gpt2"
     tokenizer = GPT2Tokenizer.from_pretrained(tokenizer_ckp)
     tokenizer.pad_token = tokenizer.eos_token   # GPT2 doesn't has pad token
-    prompt = ["In a raining day a poor man", "OpenAI is not open because"]
+    tokenizer.padding_side = "left"
+    tokenizer.pad
+    prompt = ["In a raining ", "OpenAI is not open because"]
     inputs = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
-    outputs = gpt2(**inputs, labels=inputs["input_ids"])
-    print(outputs.last_hidden_state.shape)
-    print(outputs.logits.shape)
-    print(outputs.loss)
-    outputs.loss.backward()
-
+    # outputs = gpt2(**inputs, labels=inputs["input_ids"])
+    # print(outputs.last_hidden_state.shape)
+    # print(outputs.logits.shape)
+    # print(outputs.loss)
+    # outputs.loss.backward()
+    gen_config = GenerationConfig()
+    gen_text = gpt2.generate(**inputs, generation_config=gen_config)
+    print(tokenizer.batch_decode(gen_text))
 
 if __name__ == "__main__":
     test_gpt2()
