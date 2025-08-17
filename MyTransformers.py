@@ -61,16 +61,12 @@ class MyMultiHeadAttention(nn.Module):
             raise ValueError("padding_mask.dtype must be torch.int64 or torch.bool")
         
         Q = self.q_w(query).reshape(N, q_seq_len, self.num_head, head_dim) 
-        K = self.k_w(query).reshape(N, k_seq_len, self.num_head, head_dim)
-        V = self.v_w(query).reshape(N, k_seq_len, self.num_head, head_dim)
+        K = self.k_w(key).reshape(N, k_seq_len, self.num_head, head_dim)
+        V = self.v_w(value).reshape(N, k_seq_len, self.num_head, head_dim)
         
         Q_n, K_n, V_n = Q.transpose(1, 2), K.transpose(1, 2), V.transpose(1, 2)     # (N, num_head, seq_len, dim)
         mul_res = torch.matmul(Q_n, K_n.transpose(-1, -2))  # (N, num_head, q_seq_len, k_seq_len)
-        mul_res = self.dropout(mul_res)
-
-
-
-
+        
 
         if key_padding_mask is not None:
             if key_padding_mask.dtype != torch.bool:
@@ -93,6 +89,7 @@ class MyMultiHeadAttention(nn.Module):
         if key_padding_mask is not None:    
             sf_res = sf_res.masked_fill(key_padding_mask.transpose(-1, -2).contiguous(), 0.0)      
 
+        sf_res = self.dropout(sf_res)
         head_res = torch.matmul(sf_res, V_n)    # (N, num_head, q_seq_len, head_dim)
         result = head_res.transpose(1, 2).contiguous().reshape(N, q_seq_len, self.embedding_dim)    # (N, q_seq_len, embedding_dim)
         return self.linear(result)
@@ -173,6 +170,7 @@ class Decoder(nn.Module):
         k_seq_len = hidden_state.shape[1]
         attn_mask = torch.triu(torch.ones((k_seq_len, k_seq_len)), diagonal=1).bool()
         self_mha = self.self_attn(norm_res1, norm_res1, norm_res1, key_padding_mask, attn_mask)
+        # pdb.set_trace()
         self_mha = self.dropout(self_mha)
         residual_output = self_mha + residual
         

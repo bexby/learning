@@ -44,8 +44,9 @@ class GPT2(nn.Module):
         super().__init__()
         self.embedding = GPT2Embedding(config.vocab_size, config.hidden_size, config.max_len)
         self.dropout = nn.Dropout(0.1)
-        self.layers = nn.ModuleList([Decoder(config.hidden_size, config.num_head)] * config.num_hidden_layer)
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size)
+        self.layers = nn.ModuleList([Decoder(config.hidden_size, config.num_head) for _ in range(config.num_hidden_layer)])
+        self.ln_f = nn.LayerNorm(config.hidden_size, eps=1e-5)
+        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.lm_head.weight = self.embedding.word_embedding.weight
 
     def forward(
@@ -64,11 +65,11 @@ class GPT2(nn.Module):
         labels:
             (N, max_batch_seq_len), must be the input_ids
         """
-
         hidden_state = self.embedding(input_ids)
         for decoder in self.layers:
             hidden_state = decoder(hidden_state, hidden_state, hidden_state, attention_mask)
 
+        hidden_state = self.ln_f(hidden_state)
         logits = self.lm_head(hidden_state) # (N, max_batch_seq_len, vocab_size)
 
         loss = None

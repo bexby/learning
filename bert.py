@@ -58,7 +58,7 @@ class Bert(nn.Module):
     def __init__(self, config: BertConfig):
         super().__init__()
         self.embedding = BertEmbedding(config.vocab_size, config.hidden_size, config.max_len)
-        self.layers = nn.ModuleList([Encoder(config.hidden_size, config.num_head, True)] * config.num_hidden_layer)
+        self.layers = nn.ModuleList([Encoder(config.hidden_size, config.num_head, True) for _ in range(config.num_hidden_layer)])
         
         # for NSP(Next Sentence Prediction) training
         self.pooler = BertPooler(config.hidden_size)
