@@ -67,6 +67,11 @@ class MyMultiHeadAttention(nn.Module):
         Q_n, K_n, V_n = Q.transpose(1, 2), K.transpose(1, 2), V.transpose(1, 2)     # (N, num_head, seq_len, dim)
         mul_res = torch.matmul(Q_n, K_n.transpose(-1, -2))  # (N, num_head, q_seq_len, k_seq_len)
         mul_res = self.dropout(mul_res)
+
+
+
+
+
         if key_padding_mask is not None:
             if key_padding_mask.dtype != torch.bool:
                 key_padding_mask = ~ key_padding_mask.bool()
@@ -78,7 +83,16 @@ class MyMultiHeadAttention(nn.Module):
             attn_mask = attn_mask.unsqueeze(0).unsqueeze(0)
             attn_mask = attn_mask.expand((N, self.num_head, q_seq_len, k_seq_len))
             mul_res = torch.masked_fill(mul_res, attn_mask, -torch.inf)
+
         sf_res = self.softmax(mul_res / head_dim ** 0.5)  # (N, num_head, q_seq_len, k_seq_len)
+        """ 
+        IMPORTANCE!!! 
+            To prevent nan value which can convert the score matirx into complete nan matrix when pad token's row is full of -inf
+            before softmax. This situation is common in decoder's inference stage with 'left' padding side.
+        """
+        if key_padding_mask is not None:    
+            sf_res = sf_res.masked_fill(key_padding_mask.transpose(-1, -2).contiguous(), 0.0)      
+
         head_res = torch.matmul(sf_res, V_n)    # (N, num_head, q_seq_len, head_dim)
         result = head_res.transpose(1, 2).contiguous().reshape(N, q_seq_len, self.embedding_dim)    # (N, q_seq_len, embedding_dim)
         return self.linear(result)

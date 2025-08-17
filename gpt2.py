@@ -114,7 +114,7 @@ class GPT2(nn.Module):
                             topp_indices = torch.gather(topk_indices, -1, topp_indices)
                         next_token = topp_indices
                 else:
-                    pdb.set_trace()
+                    # pdb.set_trace()
                     next_token = torch.argmax(probability, -1).unsqueeze(1)
                 input_ids = torch.cat((input_ids, next_token), dim=1)
                 attention_mask = torch.cat((attention_mask, torch.ones(attention_mask.shape[0], 1, dtype=torch.int64)), dim=1)
@@ -163,7 +163,7 @@ def test_gpt2():
     tokenizer.pad_token = tokenizer.eos_token   # GPT2 doesn't has pad token
     tokenizer.padding_side = "left"
     tokenizer.pad
-    prompt = ["In a raining ", "OpenAI is not open because"]
+    prompt = ["In a raining day, a poor man use a", "OpenAI is not open because"]
     inputs = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
     # outputs = gpt2(**inputs, labels=inputs["input_ids"])
     # print(outputs.last_hidden_state.shape)
