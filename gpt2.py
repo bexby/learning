@@ -30,11 +30,14 @@ class GPT2Embedding(nn.Module):
         self.position_embedding = nn.Embedding(max_len, hidden_size)
         self.dropout = nn.Dropout(0.1)
     
-    def forward(self, indices):
+    def forward(self, indices: torch.Tensor, position_ids: torch.Tensor = None):
         we = self.word_embedding(indices)
         bl = indices.shape[-1]
-        p_index = torch.arange(bl).unsqueeze(0)
-        pe = self.position_embedding(p_index)
+        if position_ids is None:
+            p_index = torch.arange(bl).unsqueeze(0)
+            pe = self.position_embedding(p_index)
+        else:
+            pe = self.position_embedding(position_ids)
         embedding = we + pe
         return self.dropout(embedding)
 
@@ -53,6 +56,7 @@ class GPT2(nn.Module):
         self, 
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
+        position_ids: torch.Tensor = None,
         labels: torch.Tensor = None
         ) -> GPT2Output:
         
@@ -65,7 +69,7 @@ class GPT2(nn.Module):
         labels:
             (N, max_batch_seq_len), must be the input_ids
         """
-        hidden_state = self.embedding(input_ids)
+        hidden_state = self.embedding(input_ids, position_ids)
         for decoder in self.layers:
             hidden_state = decoder(hidden_state, hidden_state, hidden_state, attention_mask)
 
@@ -101,7 +105,8 @@ class GPT2(nn.Module):
 
         with torch.no_grad():
             for _ in range(gen_len):
-                logits = self.forward(input_ids, attention_mask).logits[:, -1, :].detach().clone()
+                input_ids, attention_mask, position_ids = self.prepare_inputs_for_generation(input_ids, attention_mask)
+                logits = self.forward(input_ids, attention_mask, position_ids).logits[:, -1, :].detach().clone()
                 probability = F.softmax(logits / generation_config.temperature, dim=-1) # (N, vocab_size)
                 if generation_config.do_sample:
                     if generation_config.top_k is None and generation_config.top_p is None:
@@ -121,6 +126,13 @@ class GPT2(nn.Module):
                 attention_mask = torch.cat((attention_mask, torch.ones(attention_mask.shape[0], 1, dtype=torch.int64)), dim=1)
         
         return input_ids
+    
+
+    def prepare_inputs_for_generation(self, input_ids, attention_mask):
+        position_ids = attention_mask.cumsum(-1) - 1
+        position_ids = position_ids.masked_fill(attention_mask == 0, 1)
+        return input_ids, attention_mask, position_ids
+
 
     def top_p(self, data: torch.Tensor, p: float):
         """

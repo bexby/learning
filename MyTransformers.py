@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from collections import OrderedDict
 from typing import Optional
+import math
 import pdb
 
 
@@ -20,7 +21,7 @@ class MyMultiHeadAttention(nn.Module):
 
         if embedding_dim % num_head != 0:
             raise ValueError("could not find a equal dim to all heads")
-        
+
 
     def forward(
         self, 
@@ -73,21 +74,23 @@ class MyMultiHeadAttention(nn.Module):
                 key_padding_mask = ~ key_padding_mask.bool()
             key_padding_mask = key_padding_mask.unsqueeze(1).unsqueeze(2)
             key_padding_mask = key_padding_mask.expand((N, self.num_head, q_seq_len, k_seq_len))
-            mul_res = torch.masked_fill(mul_res, key_padding_mask, -torch.inf)
+            # pdb.set_trace()
+            mul_res = torch.masked_fill(mul_res, key_padding_mask, -1e5)
                 
         if attn_mask is not None:
             attn_mask = attn_mask.unsqueeze(0).unsqueeze(0)
             attn_mask = attn_mask.expand((N, self.num_head, q_seq_len, k_seq_len))
-            mul_res = torch.masked_fill(mul_res, attn_mask, -torch.inf)
+            mul_res = torch.masked_fill(mul_res, attn_mask, -1e5)
 
         sf_res = self.softmax(mul_res / head_dim ** 0.5)  # (N, num_head, q_seq_len, k_seq_len)
         """ 
         IMPORTANCE!!! 
-            To prevent nan value which can convert the score matirx into complete nan matrix when pad token's row is full of -inf
-            before softmax. This situation is common in decoder's inference stage with 'left' padding side.
+            If mask fill with -torch.inf, a row of NaN will appear in score matirx when pad token's row is full of -inf before softmax, 
+            and will be propagate to entire matirx. This situation is common in decoder's inference stage with 'left' padding side.
+            The better solution is masking with a small negative value , e.g. -1e5, to prevent NaN.
         """
-        if key_padding_mask is not None:    
-            sf_res = sf_res.masked_fill(key_padding_mask.transpose(-1, -2).contiguous(), 0.0)      
+        # if key_padding_mask is not None:    
+        #     sf_res = sf_res.masked_fill(torch.isnan(sf_res), 0.0)      
 
         sf_res = self.dropout(sf_res)
         head_res = torch.matmul(sf_res, V_n)    # (N, num_head, q_seq_len, head_dim)
@@ -109,7 +112,8 @@ class FNN(nn.Module):
         super().__init__()
         self.linear1 = nn.Linear(hidden_size, hidden_size * 4, bias)
         self.linear2 = nn.Linear(4 * hidden_size, hidden_size, bias)
-        self.activate = nn.GELU()
+        # self.activate = nn.GELU()
+        self.activate = lambda x: 0.5 * x * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (x + 0.044715 * x ** 3)))
         self.dropout = nn.Dropout(0.1)
 
     def forward(self, hidden_state):

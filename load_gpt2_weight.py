@@ -3,6 +3,7 @@ import torch
 from transformers import GPT2LMHeadModel, GPT2Tokenizer, GenerationConfig
 from copy import deepcopy
 from gpt2 import GPT2, GPT2Config
+import pdb
 
 
 def load_weight():
@@ -54,7 +55,6 @@ def load_weight():
     # 4) per-layer mapping
     n_layer = cfg.num_hidden_layer
     d_model = cfg.hidden_size
-
     for i in range(n_layer):
         prefix_hf = f"transformer.h.{i}"
         prefix_my = f"layers.{i}"
@@ -69,25 +69,16 @@ def load_weight():
         W_qkv = hf_sd[f"{prefix_hf}.attn.c_attn.weight"]; mapped_hf_keys.add(f"{prefix_hf}.attn.c_attn.weight")
         b_qkv = hf_sd[f"{prefix_hf}.attn.c_attn.bias"];   mapped_hf_keys.add(f"{prefix_hf}.attn.c_attn.bias")
 
-        # W_qkv might be shape (3*d, d) or (d, 3*d) depending on Conv1D implementation.
+        # W_qkv must be shape (d, 3*d) depending on Conv1D implementation.
         if W_qkv.ndim != 2:
             raise RuntimeError("unexpected c_attn weight dim")
         # get three chunks shaped like (d, d) AFTER conversion
-        if W_qkv.shape[0] == 3 * d_model and W_qkv.shape[1] == d_model:
-            W_q, W_k, W_v = W_qkv.chunk(3, dim=0)
-        elif W_qkv.shape[0] == d_model and W_qkv.shape[1] == 3 * d_model:
-            # transpose, then chunk
-            W_q, W_k, W_v = W_qkv.t().contiguous().chunk(3, dim=0)
-        else:
-            raise RuntimeError(f"unexpected c_attn weight shape: {W_qkv.shape}")
+        # transpose, then chunk
+        W_q, W_k, W_v = W_qkv.t().contiguous().chunk(3, dim=0)
+
 
         if b_qkv.shape[0] == 3 * d_model:
             b_q, b_k, b_v = b_qkv.split(d_model, dim=0)
-        elif b_qkv.shape[0] == d_model:
-            # weird but handle
-            b_q, b_k, b_v = b_qkv.t().contiguous().split(d_model, dim=0)
-        else:
-            raise RuntimeError(f"unexpected c_attn bias shape: {b_qkv.shape}")
 
         # Now ensure each weight is (out=in=d_model, in=d_model) for my Linear
         W_q = to_linear_weight(W_q, d_model, d_model)
@@ -107,7 +98,7 @@ def load_weight():
         W_proj = hf_sd[f"{prefix_hf}.attn.c_proj.weight"]; mapped_hf_keys.add(f"{prefix_hf}.attn.c_proj.weight")
         b_proj = hf_sd[f"{prefix_hf}.attn.c_proj.bias"];   mapped_hf_keys.add(f"{prefix_hf}.attn.c_proj.bias")
         # convert to (out,in) if needed
-        W_proj_lin = to_linear_weight(W_proj, d_model, d_model)
+        W_proj_lin = to_linear_weight(W_proj.t(), d_model, d_model)
         assign(new_sd, f"{prefix_my}.self_attn.linear.weight", W_proj_lin)
         assign(new_sd, f"{prefix_my}.self_attn.linear.bias",   b_proj)
 
@@ -116,8 +107,8 @@ def load_weight():
         b_fc = hf_sd[f"{prefix_hf}.mlp.c_fc.bias"];   mapped_hf_keys.add(f"{prefix_hf}.mlp.c_fc.bias")
         W_proj_mlp = hf_sd[f"{prefix_hf}.mlp.c_proj.weight"]; mapped_hf_keys.add(f"{prefix_hf}.mlp.c_proj.weight")
         b_proj_mlp = hf_sd[f"{prefix_hf}.mlp.c_proj.bias"];   mapped_hf_keys.add(f"{prefix_hf}.mlp.c_proj.bias")
-
-        # HF c_fc likely shape (4d, d) or (d,4d); we want linear1.weight shape (4d, d)
+        # pdb.set_trace()
+        # HF c_fc mast be shape (d, 4d); we want linear1.weight shape (4d, d)
         W_fc_lin = to_linear_weight(W_fc, 4*d_model, d_model)
         W_proj_mlp_lin = to_linear_weight(W_proj_mlp, d_model, 4*d_model)
         assign(new_sd, f"{prefix_my}.fnn.linear1.weight", W_fc_lin)
@@ -152,34 +143,6 @@ def load_weight():
 
     return my
 
-    tokenizer_ckp = "gpt2"
-    tokenizer = GPT2Tokenizer.from_pretrained(tokenizer_ckp)
-    tokenizer.pad_token = tokenizer.eos_token   # GPT2 doesn't has pad token
-    tokenizer.padding_side = "left"
-    tokenizer.pad
-    prompt = ["In a raining day, a poor man use a", "OpenAI is not open because"]
-    inputs = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
-    gen_config = GenerationConfig()
-    hf_text = hf_model.generate(inputs["input_ids"], gen_config)
-    gen_text = my.generate(**inputs, generation_config=gen_config)
-    print(tokenizer.batch_decode(gen_text))
-    print(tokenizer.batch_decode(hf_text))
-
-
-    text = "Hello, my dog is cute"
-    ids = tokenizer(text, return_tensors="pt")["input_ids"]
-
-    # hf logits
-    with torch.no_grad():
-        hf_logits = hf_model(ids).logits
-
-    # my model
-    my.eval()
-    with torch.no_grad():
-        my_logits = my(ids, attention_mask=torch.ones_like(ids)).logits
-
-    # compare (elementwise mean absolute error)
-    print("MAE logits:", (hf_logits - my_logits).abs().mean().item())
 
 def test_aline(my_model):
     HF_NAME = "gpt2"
@@ -234,6 +197,7 @@ def test_aline(my_model):
         # get initial embedding (你的 GPT2Embedding 返回 dropout; eval() 已禁用 dropout)
         my_embed = my_model.embedding(input_ids)   # (B, T, D)
         my_hidden_states = []
+        my_hidden_states.append(my_embed)
         h = my_embed
         for i, block in enumerate(my_model.layers):
             # block 的 signature: block(hidden_state, key, value, key_padding_mask)
@@ -241,7 +205,7 @@ def test_aline(my_model):
             my_hidden_states.append(h)
 
     print("my_model layers count:", len(my_hidden_states))
-
+    pdb.set_trace()
     # -------------- 3) 对齐 HF 的 hidden_states 与 my_hidden_states --------------
     # HF 的 hidden_states 很可能是 [embedding, layer0_out, layer1_out, ..., layerN_out]
     # 我们要把 hf_layer_states 对齐为与 my_hidden_states 一一对应（layer0..layerN-1）
@@ -396,7 +360,30 @@ def check_weight(my_model):
                 print("mlp key missing:", my_key, hf_key)
 
 
+def test_generation(mygpt2):
+    tokenizer_ckp = "gpt2"
+    hf_model = GPT2LMHeadModel.from_pretrained("gpt2").eval()
+    tokenizer = GPT2Tokenizer.from_pretrained(tokenizer_ckp)
+    tokenizer.pad_token = tokenizer.eos_token   # GPT2 doesn't has pad token
+    tokenizer.padding_side = "left"
+    prompt = ["Hello, my dog is cute", "OpenAI is not open because", "jack has"]
+    inputs = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
+
+    # inputs = {k: torch.ones_like(v, dtype=torch.int64) if k == "attention_mask" else v for k, v in inputs.items()}
+    with torch.no_grad():
+        my_output = mygpt2(**inputs)
+        hf_output = hf_model(**inputs, output_hidden_states=True, return_dict=True)
+    print("last_hidden_state difference: ", (my_output.last_hidden_state - hf_output.hidden_states[-1]).abs().mean().item())
+    print("logits difference: ", (my_output.logits - hf_output.logits).abs().mean().item())
+    
+    gen_config = GenerationConfig(do_sample=False, max_length=50)
+    hf_text = hf_model.generate(inputs["input_ids"], gen_config, attention_mask=inputs["attention_mask"])
+    gen_text = mygpt2.generate(**inputs, generation_config=gen_config)
+    print(tokenizer.batch_decode(gen_text))
+    print(tokenizer.batch_decode(hf_text))
+
 if __name__ == "__main__":
-    mygpt2 = load_weight()
-    test_aline(mygpt2)
+    mygpt2 = load_weight().eval()
+    test_generation(mygpt2)
+    # test_aline(mygpt2)
     # check_weight(mygpt2)
