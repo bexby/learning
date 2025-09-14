@@ -2,7 +2,7 @@ import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from MyTransformers import Encoder
+from remake_llm.MyTransformers import Encoder
 from dataclasses import dataclass
 from transformers import BertTokenizer
 import pdb
