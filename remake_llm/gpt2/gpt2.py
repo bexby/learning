@@ -1,10 +1,8 @@
 import os
-os.environ['HTTP_PROXY'] = 'http://127.0.0.1:7890'
-os.environ['HTTPS_PROXY'] = 'http://127.0.0.1:7890'
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from MyTransformers import Decoder
+from remake_llm.MyTransformers import Decoder
 from dataclasses import dataclass
 from transformers import GPT2Tokenizer, GenerationConfig
 import pdb
