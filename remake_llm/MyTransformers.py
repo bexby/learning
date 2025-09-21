@@ -58,7 +58,7 @@ class MyMultiHeadAttention(nn.Module):
             raise ValueError("query and key's dim are not equal")
         elif key.shape[1] != value.shape[1]:
             raise ValueError("key_seq_len is not equal to value_seq_len")
-        elif key_padding_mask.dtype != torch.int64 and key_padding_mask.dtype != torch.bool:
+        elif key_padding_mask is not None and key_padding_mask.dtype != torch.int64 and key_padding_mask.dtype != torch.bool:
             raise ValueError("padding_mask.dtype must be torch.int64 or torch.bool")
         
         Q = self.q_w(query).reshape(N, q_seq_len, self.num_head, head_dim) 
