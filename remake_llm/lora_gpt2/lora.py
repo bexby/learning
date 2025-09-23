@@ -6,11 +6,11 @@ from remake_llm.gpt2.gpt2 import GPT2, GPT2Config
 from remake_llm.gpt2.load_gpt2_weight import load_weight
 from typing import Optional
 from dataclasses import dataclass
-
+import pdb
 
 @dataclass
 class LoraConfig:
-    r: int = 4
+    r: int = 32
     target_model = MyMultiHeadAttention
     lora_alpha: float = 16
 
@@ -20,7 +20,7 @@ class MultiHeadAttentionForLoRA(nn.Module):
         super().__init__()
         if not isinstance(model, config.target_model):
             raise ValueError(f"LoRA injected only in {config.target_model}")
-        
+
         self.embedding_dim = model.embedding_dim
         self.num_head = model.num_head
         self.lora_alhpa = config.lora_alpha
@@ -29,9 +29,9 @@ class MultiHeadAttentionForLoRA(nn.Module):
         in_feature = self.embedding_dim
         out_feature = config.r
         self.qw_lora_a = nn.Parameter(torch.empty((in_feature, out_feature)))
-        self.qw_lora_b = nn.Parameter(torch.empty((out_feature, in_feature)))
+        self.qw_lora_b = nn.Parameter(torch.zeros((out_feature, in_feature)))
         self.vw_lora_a = nn.Parameter(torch.empty((in_feature, out_feature)))
-        self.vw_lora_b = nn.Parameter(torch.empty((out_feature, in_feature)))
+        self.vw_lora_b = nn.Parameter(torch.zeros((out_feature, in_feature)))
 
         nn.init.kaiming_uniform_(self.qw_lora_a)
         nn.init.kaiming_uniform_(self.vw_lora_a)
@@ -77,7 +77,6 @@ class MultiHeadAttentionForLoRA(nn.Module):
         
         delta_qw = self.qw_lora_a @ self.qw_lora_b
         delta_vw = self.vw_lora_a @ self.vw_lora_b
-    
 
         Q = (self.q_w(query) + query @ delta_qw.t()).reshape(N, q_seq_len, self.num_head, head_dim) 
         K = self.k_w(key).reshape(N, k_seq_len, self.num_head, head_dim)
@@ -134,35 +133,60 @@ def get_peft_model(model, config):
     return model
 
 
+def test_mha():
+    mha = MyMultiHeadAttention(64, 4)
+    lora_config = LoraConfig()
+    lora_mha = MultiHeadAttentionForLoRA(mha, lora_config)
+    input = torch.randn((1, 4, 64))
+    print(lora_mha)
+    print(lora_mha(input, input, input).shape)
 
-def main():
-    # mha = MyMultiHeadAttention(64, 4)
-    # lora_config = LoraConfig()
-    # lora_mha = MultiHeadAttentionForLoRA(mha, lora_config)
-    # input = torch.randn((1, 4, 64))
-    # print(lora_mha(input, input, input).shape)
-    tokenizer_ckp = "gpt2"
-    hf_model = GPT2LMHeadModel.from_pretrained("gpt2").eval()
-    tokenizer = GPT2Tokenizer.from_pretrained(tokenizer_ckp)
-    tokenizer.pad_token = tokenizer.eos_token   # GPT2 doesn't has pad token
-    tokenizer.padding_side = "left"
+
+def print_update_param(model):
+    count = 0
+    require = 0
+    for param in model.parameters():
+        if param.requires_grad:
+            require += param.numel()
+        count += param.numel()
+    print(f"all: {count}, required_grad: {require}, proportion: {require / count}")
+
+
+
+def test_gpt2():
+
+    from transformers import GPT2Tokenizer
+    from remake_llm.gpt2.load_gpt2_weight import load_weight
+
+    base_mygpt2 = load_weight().eval()
+    temp_mygpt2 = load_weight().eval()
+    lora_config = LoraConfig()
+    lora_mygpt2 = temp_mygpt2
+    lora_mygpt2 = get_peft_model(temp_mygpt2, lora_config).eval()
+    print("base mygpt2")
+    print_update_param(base_mygpt2)
+    print("lora_mygpt2")
+    print_update_param(lora_mygpt2)
+    
+
     prompt = ["Hello, my dog is cute", "OpenAI is not open because", "jack has"]
+    tokenizer_ckp = "gpt2"
+    tokenizer = GPT2Tokenizer.from_pretrained(tokenizer_ckp)
+    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "left"
     inputs = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
 
-    # inputs = {k: torch.ones_like(v, dtype=torch.int64) if k == "attention_mask" else v for k, v in inputs.items()}
-    with torch.no_grad():
-        my_output = mygpt2(**inputs)
-        hf_output = hf_model(**inputs, output_hidden_states=True, return_dict=True)
-    print("last_hidden_state difference: ", (my_output.last_hidden_state - hf_output.hidden_states[-1]).abs().mean().item())
-    print("logits difference: ", (my_output.logits - hf_output.logits).abs().mean().item())
-    
-    gen_config = GenerationConfig(do_sample=False, max_length=50)
-    hf_text = hf_model.generate(inputs["input_ids"], gen_config, attention_mask=inputs["attention_mask"])
-    gen_text = mygpt2.generate(**inputs, generation_config=gen_config)
-    print(tokenizer.batch_decode(gen_text))
-    print(tokenizer.batch_decode(hf_text))
+    base_output = base_mygpt2(**inputs, labels=inputs["input_ids"])
+    lora_output = lora_mygpt2(**inputs, labels=inputs["input_ids"])
+    print("base loss: ", base_output.loss)
+    print("lora loss: ", lora_output.loss)
+    print()
+    print(torch.sum(base_output.logits - lora_output.logits))
 
-    pass
+
+def main():
+    test_gpt2()
+    # test_mha()
 
 if __name__ == "__main__":
     main()

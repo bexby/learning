@@ -1,17 +1,17 @@
-# mapping_hf_to_my.py
 import torch
 from transformers import GPT2LMHeadModel, GPT2Tokenizer, GenerationConfig
 from copy import deepcopy
-from gpt2 import GPT2, GPT2Config
+from remake_llm.gpt2.gpt2 import GPT2, GPT2Config
 import pdb
 
 
-def load_weight():
-    # 假设你的 GPT2 / GPT2Config 在当前 namespace 中可用
-    # from your_module import GPT2, GPT2Config
+def load_weight() -> GPT2:
+    """
+        return a instence of my GPT2 with weights of HF GPT2
+    """
 
     # 1) load HF model (cpu or cuda)
-    hf_name = "gpt2"  # 或者 "gpt2-medium" / "gpt2-large" 等
+    hf_name = "gpt2"  
     hf_model = GPT2LMHeadModel.from_pretrained(hf_name)
     hf_sd = hf_model.state_dict()
 
@@ -23,7 +23,7 @@ def load_weight():
         num_head=hf_model.config.n_head,
         max_len=hf_model.config.n_positions
     )
-    my = GPT2(cfg)   # 记得你要先修复 ModuleList 的问题
+    my = GPT2(cfg)   
     my_sd_keys = set(my.state_dict().keys())
 
     # helper utilities
