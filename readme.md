@@ -2,10 +2,13 @@
 ## 目标  
 - 实现多头注意力，朴素Encoder、Decoder、Transformer **from scratch**
 - 实现Bert、GPT2、Llama3.1 推理/训练  
+- 实现KVCache，量化
 - 编写LLMs微调/训练框架  
 - 实现分布式训练/推理， flash attention  
 ## TODO  
 - ~~GPT2 推理/训练/generate~~
+- GPT2参数量估计
+- GPT2KVCache
 - Llama3.1 推理/训练
 - LLMs 训练框架  
 
